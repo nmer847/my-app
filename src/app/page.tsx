@@ -10,8 +10,8 @@ const LoginPage = () => {
     event.preventDefault();
 
     if (username === "tiger" && password === "123") {
-      alert("تم الدخول0 بنجاح!");
-      window.location.href = "web16.html";
+      alert("تم الدخول02 بنجاح!");
+      window.location.href = "/web16.html";
     } else {
       alert("اسم المستخدم أو كلمة المرور غير صحيحة!");
     }
@@ -20,12 +20,12 @@ const LoginPage = () => {
   return (
     <div
       className="flex items-center justify-center min-h-screen bg-cover bg-center"
-      style={{ backgroundImage: 'url("imgGun1.webp")' }}
+      style={{ backgroundImage: 'url("/imgGun1.webp")' }}
     >
       <div className="bg-white bg-opacity-90 p-8 rounded-2xl shadow-lg max-w-md w-full text-center">
         <div className="mb-6">
           <img
-            src="imgGun1.webp"
+            src="/imgGun1.webp"
             alt="Military-themed image"
             className="w-full rounded-lg"
           />
