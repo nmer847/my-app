@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>تحكم بالسيرفو مع COCO-SSD</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        font-family: Arial;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+
+      #camera {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      #canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 10;
+      }
+
+      #status {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        color: white;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 5px 10px;
+        border-radius: 5px;
+        z-index: 20;
+      }
+
+      .angleDisplay {
+        font-size: 16px;
+        color: white;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px;
+      }
+
+      .controls {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 10px;
+        z-index: 20;
+      }
+
+      button {
+        padding: 12px 24px;
+        font-size: 16px;
+        cursor: pointer;
+        border-radius: 5px;
+        border: none;
+        transition: 0.3s;
+      }
+
+      #connectBtn {
+        background: #4caf50;
+        color: white;
+      }
+
+      #shotgun {
+        background: #c8051f;
+        color: white;
+      }
+
+      #warning1 {
+        background: #490db9;
+        color: white;
+      }
+
+      #btnLeft {
+        background: #2196f3;
+        color: white;
+      }
+
+      #btnRight {
+        background: #ff9800;
+        color: white;
+      }
+
+      #btnReset {
+        background: #f44336;
+        color: white;
+      }
+
+      #btnUp {
+        background: #2196f3;
+        color: white;
+      }
+
+      #btnDown {
+        background: #ff9800;
+        color: white;
+      }
+
+      button:active {
+        opacity: 0.8;
+      }
+
+      #objectCount {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        font-size: 16px;
+        color: white;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 5px 10px;
+        border-radius: 5px;
+        z-index: 20;
+      }
+
+      .warning {
+        animation: blink 1s infinite;
+      }
+
+      @keyframes blink {
+        0%,
+        50%,
+        100% {
+          background-color: #490db9;
+        }
+        25%,
+        75% {
+          background-color: #ff0000;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <video id="camera" autoplay></video>
+    <canvas id="canvas"></canvas>
+
+    <div id="status">الاتصال غير نشط</div>
+
+    <div
+      id="angleDisplays"
+      style="position: absolute; top: 50px; left: 10px; z-index: 20"
+    >
+      <div id="angleDisplay1" class="angleDisplay">
+        الزاوية الحالية للسيرفو 1: 0°
+      </div>
+      <div id="angleDisplay2" class="angleDisplay">
+        الزاوية الحالية للسيرفو 2: 0°
+      </div>
+    </div>
+
+    <div id="objectCount">عدد الأجسام المكتشفة: 0</div>
+
+    <div class="controls">
+      <button id="connectBtn">اتصال بالأردوينو</button>
+      <button id="shotgun">رماية</button>
+      <button id="warning1">اكتشاف</button>
+      <button id="btnUp">أعلى ↑</button>
+      <button id="btnDown">أسفل ↓</button>
+      <button id="btnLeft">يسار ←</button>
+      <button id="btnRight">يمين →</button>
+      <button id="btnReset">تصفير ومركزة</button>
+    </div>
+
+    <audio id="alertSound" src="alert-sound.mp3"></audio>
+    <audio id="shotgunSound" src="shotgun-sound.mp3"></audio>
+
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <!-- COCO-SSD -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+    <script>
+      let port;
+      let angle1 = 0;
+      let angle2 = 0;
+      const step = 2;
+      let moveInterval = null;
+      let currentDirection = 0;
+
+      const connectBtn = document.getElementById("connectBtn");
+      const statusDiv = document.getElementById("status");
+      const angleDisplay1 = document.getElementById("angleDisplay1");
+      const angleDisplay2 = document.getElementById("angleDisplay2");
+      const btnLeft = document.getElementById("btnLeft");
+      const btnRight = document.getElementById("btnRight");
+      const btnReset = document.getElementById("btnReset");
+      const btnUp = document.getElementById("btnUp");
+      const btnDown = document.getElementById("btnDown");
+      const objectCount = document.getElementById("objectCount");
+
+      let circleX = 0;
+      let circleY = 0;
+      const circleRadius = 15;
+
+      // وظيفة الاتصال
+      connectBtn.addEventListener("click", async () => {
+        try {
+          port = await navigator.serial.requestPort();
+          await port.open({ baudRate: 9600 });
+          statusDiv.textContent = "متصل - جاهز للاستخدام";
+          statusDiv.style.color = "green";
+        } catch (err) {
+          statusDiv.textContent = "خطأ في الاتصال: " + err.message;
+          statusDiv.style.color = "red";
+        }
+      });
+
+      // وظائف التحكم المشتركة
+      async function updateServo(servoNumber, angle) {
+        if (!port?.writable) return;
+        const writer = port.writable.getWriter();
+        await writer.write(
+          new TextEncoder().encode(`${servoNumber},${angle}\n`)
+        );
+        writer.releaseLock();
+      }
+
+      function startMove(servoNumber, direction) {
+        if (currentDirection === direction) return;
+        stopMove();
+        currentDirection = direction;
+        moveInterval = setInterval(() => {
+          if (servoNumber === 1) {
+            angle1 = Math.max(0, Math.min(180, angle1 + step * direction));
+            angleDisplay1.textContent = `الزاوية الحالية للسيرفو 1: ${angle1}°`;
+          } else if (servoNumber === 2) {
+            angle2 = Math.max(0, Math.min(180, angle2 + step * direction));
+            angleDisplay2.textContent = `الزاوية الحالية للسيرفو 2: ${angle2}°`;
+          }
+          updateServo(servoNumber, servoNumber === 1 ? angle1 : angle2);
+        }, 50);
+      }
+
+      function stopMove() {
+        clearInterval(moveInterval);
+        moveInterval = null;
+        currentDirection = 0;
+      }
+
+      // تحريك الدائرة
+      function moveCircle(dx, dy) {
+        circleX = Math.max(
+          circleRadius,
+          Math.min(canvas.width - circleRadius, circleX + dx)
+        );
+        circleY = Math.max(
+          circleRadius,
+          Math.min(canvas.height - circleRadius, circleY + dy)
+        );
+        drawCircle();
+      }
+
+      // رسم الدائرة
+      function drawCircle() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+        ctx.arc(circleX, circleY, circleRadius, 0, 2 * Math.PI);
+        ctx.fillStyle = "transparent";
+        ctx.fill();
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      }
+
+      // تحكم بالكيبورد
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft") {
+          moveCircle(-10, 0);
+          startMove(1, -1);
+        } else if (e.key === "ArrowRight") {
+          moveCircle(10, 0);
+          startMove(1, 1);
+        } else if (e.key === "ArrowUp") {
+          moveCircle(0, -10);
+          startMove(2, 1);
+        } else if (e.key === "ArrowDown") {
+          moveCircle(0, 10);
+          startMove(2, -1);
+        }
+      });
+
+      document.addEventListener("keyup", (e) => {
+        if (
+          e.key === "ArrowLeft" ||
+          e.key === "ArrowRight" ||
+          e.key === "ArrowUp" ||
+          e.key === "ArrowDown"
+        )
+          stopMove();
+      });
+
+      // تحكم بالأزرار
+      btnLeft.addEventListener("mousedown", () => {
+        moveCircle(-10, 0);
+        startMove(1, -1);
+      });
+      btnRight.addEventListener("mousedown", () => {
+        moveCircle(10, 0);
+        startMove(1, 1);
+      });
+
+      btnUp.addEventListener("mousedown", () => {
+        moveCircle(0, -10);
+        startMove(2, 1);
+      });
+      btnDown.addEventListener("mousedown", () => {
+        moveCircle(0, 10);
+        startMove(2, -1);
+      });
+
+      // زر التصفير والمركزة
+      btnReset.addEventListener("click", () => {
+        angle1 = 0;
+        angleDisplay1.textContent = `الزاوية الحالية للسيرفو 1: ${angle1}°`;
+        updateServo(1, angle1);
+
+        angle2 = 0;
+        angleDisplay2.textContent = `الزاوية الحالية للسيرفو 2: ${angle2}°`;
+        updateServo(2, angle2);
+
+        circleX = canvas.width / 2;
+        circleY = canvas.height / 2;
+        drawCircle();
+      });
+
+      // إيقاف الحركة عند رفع الماوس
+      [btnLeft, btnRight, btnUp, btnDown].forEach((btn) => {
+        btn.addEventListener("mouseup", stopMove);
+        btn.addEventListener("mouseleave", stopMove);
+      });
+
+      // تشغيل الكاميرا
+      const video = document.getElementById("camera");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      navigator.mediaDevices
+        .getUserMedia({ video: true })
+        .then((stream) => {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            circleX = canvas.width / 2;
+            circleY = canvas.height / 2;
+            drawCircle();
+            detectObjects();
+          };
+        })
+        .catch((err) => {
+          console.error("خطأ في تشغيل الكاميرا: ", err);
+        });
+
+      // متغير لتتبع حالة الاكتشاف
+      let isObjectDetected = false;
+
+      // وظيفة الكشف عن الكائنات باستخدام COCO-SSD
+      async function detectObjects() {
+        const model = await cocoSsd.load();
+        setInterval(async () => {
+          const predictions = await model.detect(video);
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          drawCircle(); // إعادة رسم الدائرة
+
+          let detectedCount = 0;
+
+          predictions.forEach((prediction) => {
+            if (prediction.score > 0.5) {
+              detectedCount++;
+              const [x, y, width, height] = prediction.bbox;
+
+              // رسم المربع حول الجسم
+              ctx.strokeStyle = "#00FF00";
+              ctx.lineWidth = 2;
+              ctx.strokeRect(x, y, width, height);
+
+              // كتابة اسم الجسم ونسبة الثقة
+              ctx.fillStyle = "#00FF00";
+              ctx.font = "16px Arial";
+              ctx.fillText(
+                `${prediction.class} (${Math.round(prediction.score * 100)}%)`,
+                x,
+                y > 10 ? y - 5 : 10
+              );
+            }
+          });
+
+          objectCount.textContent = `عدد الأجسام المكتشفة: ${detectedCount}`;
+
+          // التحقق من وجود أجسام
+          if (detectedCount > 0 && !isObjectDetected) {
+            isObjectDetected = true;
+            activateWarning();
+          } else if (detectedCount === 0 && isObjectDetected) {
+            isObjectDetected = false;
+            deactivateWarning();
+          }
+        }, 100);
+      }
+
+      // وظيفة تنشيط التنبيه
+      function activateWarning() {
+        const warningBtn = document.getElementById("warning1");
+        const alertSound = document.getElementById("alertSound");
+
+        warningBtn.classList.add("warning");
+        alertSound.play();
+      }
+
+      // وظيفة إيقاف التنبيه
+      function deactivateWarning() {
+        const warningBtn = document.getElementById("warning1");
+        const alertSound = document.getElementById("alertSound");
+
+        warningBtn.classList.remove("warning");
+        alertSound.pause();
+        alertSound.currentTime = 0;
+      }
+
+      // الحصول على عنصر الصوت
+      const shotgunSound = document.getElementById("shotgunSound");
+
+      // إضافة حدث النقر على زر الرماية
+      const shotgunBtn = document.getElementById("shotgun");
+      shotgunBtn.addEventListener("click", () => {
+        shotgunSound.play();
+      });
+    </script>
+  </body>
+</html>
