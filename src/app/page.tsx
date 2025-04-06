@@ -32,7 +32,7 @@ const LoginPage = () => {
         </div>
 
         <h1 className="text-2xl font-bold text-gray-800 mb-6">
-          برنامج الرماية عن بعد
+          برنامج الرماية2 عن بعد
         </h1>
 
         <form onSubmit={handleSubmit} className="text-right">
